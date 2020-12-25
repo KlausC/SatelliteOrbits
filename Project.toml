@@ -1,0 +1,26 @@
+name = "SatelliteOrbits"
+uuid = "eae5bd59-d613-4515-a30c-355ccfff4568"
+authors = ["Klaus Crusius <klaus.crusius@web.de>"]
+version = "0.1.0"
+
+[deps]
+AstroBase = "e1773a3a-3ab2-51da-b25a-65b4161c689f"
+DifferentialEquations = "0c46a032-eb83-5123-abaf-570d42b7fbaa"
+JPLEphemeris = "30a7bc16-7fba-505b-b600-cae92896a3fe"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+NBodySimulator = "0e6f8da7-a7fc-5c8b-a220-74e902c310f9"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[compat]
+AstroBase = "0.1"
+DifferentialEquations = "6"
+JPLEphemeris = "0.1"
+NBodySimulator = "1.4"
+StaticArrays = "0.12"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
