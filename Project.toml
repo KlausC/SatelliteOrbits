@@ -17,7 +17,7 @@ AstroBase = "0.1"
 DifferentialEquations = "6"
 JPLEphemeris = "0.1"
 NBodySimulator = "1.4"
-StaticArrays = "0.12"
+StaticArrays = "0.12, 1.0"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
