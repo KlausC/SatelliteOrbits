@@ -17,6 +17,7 @@ AstroBase = "0.1"
 DifferentialEquations = "6"
 JPLEphemeris = "0.1"
 NBodySimulator = "1.4"
+Plots = "1.10"
 StaticArrays = "0.12"
 
 [extras]
