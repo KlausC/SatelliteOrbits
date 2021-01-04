@@ -5,8 +5,10 @@ using StaticArrays
 
 using AstroBase
 using JPLEphemeris
-using NBodySimulator
+using DifferentialEquations
+using DiffEqPhysics
 using Plots
+using NBodySimulator
 
 include("orbitmodel.jl")
 

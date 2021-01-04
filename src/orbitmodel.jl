@@ -1,7 +1,7 @@
 
 #=
 struct SatelliteModel{E<:Epoch,X,Y}
-    origin::Body
+    origin::CelestialBody
     time::E
     pos::X
     vel::V
@@ -90,23 +90,28 @@ function get_accelerating_function(p::SolarSystemParameters, simulation::NBodySi
             tj = t0 + t*seconds
             u = u[:,i]
             v = v[:,i]
-            pm = SVector{3}(position(spk, tj, earth, moon))
-            ps = SVector{3}(position(spk, tj, earth, sun))
-            ue = u
+            pe, qe = SVector{3}.(state(spk, tj, earth, earth))
+            pm = SVector{3}(position(spk, tj, earth_barycenter, moon))
+            ps = SVector{3}(position(spk, tj, earth_barycenter, sun))
+            ue = u  .- pe
             um = ue .- pm
             us = ue .- ps
+            ve = v  .- qe
+            println("time=$tj $ue $u")
             r = norm(ue)
             s = norm(v)
             gg = -gpe / r^3
             gm = -gpm / norm(um)^3
             gs = -gps / norm(us)^3
             dp = gm * um + gs * us
-            println("ssaccel gearth     $(gg * u)")
-            println("ssaccel g moon/sun $dp")
-            if r < 6000
-                dp .-= v / tt
+            #println("ssaccel gearth     $(gg * u)")
+            #println("ssaccel g moon/sun $dp")
+            #=
+            if r <= r0
+                dp .-= ve * (r0/r - 1) / tt
             end
-            dv .= gg * ue + dp
+            =#
+            dv .= gg * ue + 0 * dp
         end
         nothing
     end
@@ -119,13 +124,14 @@ function test2(;hrs=1hours, speed=1, angle=0)
 
     gpe = grav_param(earth)
     h0 = mean_radius(earth) + 400
-    ve = sqrt(gpe / h0)
+    vx = sqrt(gpe / h0)
 
-    z = zero(SVector{3})
+    z = zero(SVector{3})a
     s, c = sincosd(angle)
-    v = ve * speed
-    r = SVector(s * h0, c * h0, 0.0)
-    v = SVector(c*v, - s*v, 0.0)
+    v = vx * speed
+    re, ve = state(spk, t0, earth, earth)
+    r = SVector{3}(re + [s * h0, c * h0, 0.0])
+    v = SVector{3}(ve + [c*v, - s*v, 0.0])
     mass = 1.25
     body1 = MassBody(r, v, mass)
     bearth = MassBody(z, z, 0.0)
@@ -151,18 +157,131 @@ function deviation(spk, tj, body, gpb, u)
     gs - gb
 end
 
-function accel(spk, t0, dt)
+accel(spk, t0, dt=600) = accel(spk, t0, ssb, earth, dt)
+
+function accel1(spk, t0, orig, body, dt)
     tm = t0 - dt*seconds
     tp = t0 + dt*seconds
-    sp = velocity(spk, tp, earth)
-    sm = velocity(spk, tm, earth)
+    sp = velocity(spk, tp, orig, body)
+    sm = velocity(spk, tm, orig, body)
     (sp - sm) ./ 2dt
 end
 
-function accel2(spk, t0, dt)
-    g0 = accel(spk, t0, dt)
-    g1 = accel(spk, t0, 2dt)
+function accel(spk, t0, orig, body, dt=600)
+    g0 = accel1(spk, t0, orig, body, dt)
+    g1 = accel1(spk, t0, orig, body, 2dt)
     (g0 - g1) / 3 + g0
 end
 
 toseconds(hrs) = seconds(hrs).Δt
+
+struct SolarSystemP
+    m::Float64
+    spk::SPK
+    t0::TDBEpoch
+    inertial::CelestialBody # inertialsystem center (e.g. sun or earth_barycenter)
+    origin::CelestialBody # origin of coordinates (e.g. earth)
+    bodies
+    gravis
+    SolarSystemP(spk::SPK, t0::TDBEpoch, inertial::CelestialBody, origin::CelestialBody, bodies) =
+        new(1.0, spk, t0, inertial, origin, bodies, grav_param.(bodies))
+end
+
+#=
+function L(x, v, param, t)
+    Q = q[1:3]
+    P = p[1:3]
+    tj = param.t0 + t * seconds
+    pos = x - param.position.(Ref(spk), Ref(tj), Ref(param.origin), param.bodies)
+    param.m / 2 * (v + velocity(spk, tj, param.inertial, param.origin))^2 + param.m * sum(param.gravis ./ pos)
+end
+
+p(v, t) = ∂L/∂v = m * (v + velocity(t, origin))  => v(p, t) = p / m - velocity(t, origin)
+
+H(p, q) = sum(v(p, t) * p) - L(q, v(p, t), t) = p^2 / m - p * velocity(origin, t) - p^2 /2m + m * sum(gravis(body) / (q + pos(orig) - pos(body)))
+
+=#
+
+function H(p, q, param)
+    t = q[4]
+    E = p[4]
+    Q = q[1:3]
+    P = p[1:3]
+    tj = param.t0 + t * seconds
+    pos= [Q .- position(spk, tj, param.origin, param.bodies[i]) for i = 1:length(param.bodies)]
+    norm(P)^2 / 2param.m - dot(P, velocity(spk, tj, param.inertial, param.origin)) - param.m * sum(param.gravis ./ norm.(pos)) + E
+end
+
+
+function dq(p, q, param::SolarSystemP, t)
+    t = q[4]
+    P = p[1:3]
+    tj = param.t0 + t * seconds
+    SVector{4}([P / param.m - velocity(spk, tj, param.inertial, param.origin); 1.0])
+end
+
+function dp(p, q, param::SolarSystemP, t)
+    t = q[4]
+    E = p[4]
+    Q = q[1:3]
+    P = p[1:3]
+    tj = param.t0 + t * seconds
+    n = length(param.bodies)
+    
+    pos = [Q .- position(spk, tj, param.origin, param.bodies[i]) for i = 1:n]
+    dp13 = -param.m * sum( param.gravis[i] / norm(pos[i])^3 * pos[i] for i in 1:n)
+    dp4 = dot(P, accel(spk, tj, param.inertial, param.origin))
+    dp4 += param.m * sum(param.gravis[i] / norm(pos[i])^3 * dot(pos[i], accel(spk, tj, param.origin, param.bodies[i])) for i = 1:n) 
+    SVector{4}([dp13; dp4])
+end
+
+function startvalues(h, v, dir, rot)
+    pos = normalize(dir) * h
+    vel = normalize(cross(dir, rot)) * v
+    vel, pos
+end
+
+function startvalues(ssp::SolarSystemP, t::Period, tv::Period, h, vfactor)
+    spk = ssp.spk
+    tj = ssp.t0 + t
+    ts = toseconds(t)
+    if length(ssp.bodies) >= 2
+        body1 = ssp.bodies[1]
+        body2 = ssp.origin == body1 ? ssp.bodies[2] : body1
+        dir = position(spk, tj + tv, body1, body2)
+        rot = cross(velocity(spk, tj + tv, body1, body2), position(spk, tj + tv, body1, body2))
+    else
+        rot = [0.0, 0.0, 1.0]
+        dir = [1.0, 0.0, 0.0]
+    end
+    v = sqrt(ssp.gravis[1] / norm(h)) * vfactor
+    vel, pos = startvalues(h, v, dir, rot)
+    E = H([pos; ts], [vel; 0.0], ssp)
+    SVector{4,Float64}([vel * ssp.m; E]), SVector{4,Float64}([pos; ts])
+end
+
+function problem(ssp::SolarSystemP, tspan, tv, h, v)
+    ts = toseconds(tspan[1]), toseconds(tspan[2])
+    p0, q0 = startvalues(ssp, tspan[1], tv, h, v)
+    HamiltonianProblem((dp, dq), p0, q0, ts, ssp)
+end
+
+function plotorbit(t0::TDBEpoch, tv::Period, n::Integer, v, h=6700.0; dt = 300)
+    ssp = SolarSystemP(spk, t0, earth_barycenter, earth, [earth, moon])
+    axis = [-400000.0, 400000.0]
+    prob = problem(ssp, (0days, n*days), tv, -h, v)
+    sol = solve(prob, KahanLi8(), dt=dt)
+    for i = 0:n; p = scatter!(vcat.(sol(i*3600*24)[5:6])...); display(p); end
+    p = plot!(sol, vars=(5,6), xaxis=axis, yaxis=axis)
+    display(p)
+    sol
+end
+
+function plotmoon(t0, n) 
+    p = plot(legend=false)
+    for i = 0:n
+         scatter!(p, vcat.(position(spk, t0 + i*days, earth, moon)[1:2])..., mark=:x)
+         display(p)
+    end
+end
+
