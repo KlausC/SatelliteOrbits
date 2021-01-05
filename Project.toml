@@ -24,6 +24,7 @@ JPLEphemeris = "0.1"
 NBodySimulator = "1"
 Plots = "1"
 StaticArrays = "0.12, 1"
+Unitful = "1.5"
 julia = "1"
 
 [extras]
