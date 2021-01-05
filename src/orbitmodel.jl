@@ -36,7 +36,7 @@ function test1()
     v0 = sqrt(g0 * h0)
     me = gpe / G
 
-    z = zero(SVector{3})
+    z = zeros(SVector{3})
     r = SVector(h0, 0.0, 0.0)
     v = SVector(0.0, v0, 0.0)
     mass = 1.25
@@ -150,7 +150,7 @@ function test2(;hrs=1hours, speed=1, angle=0)
 end
 
 function deviation(spk, tj, body, gpb, u)
-    ub = SVector{3}(position(spk, tj, earth, body))
+    ub = (position(spk, tj, earth, body))
     us = ub .- u
     gs = gpb / norm(us)^3 * us
     gb = gpb / norm(ub)^3 * ub
@@ -213,14 +213,14 @@ function H(p, q, param)
 end
 
 
-function dq(p, q, param::SolarSystemP, t)
+function dq(qdot, p, q, param::SolarSystemP, t)
     t = q[4]
     P = p[1:3]
     tj = param.t0 + t * seconds
-    SVector{4}([P / param.m - velocity(spk, tj, param.inertial, param.origin); 1.0])
+    qdot .= ([P / param.m - velocity(spk, tj, param.inertial, param.origin); 1.0])
 end
 
-function dp(p, q, param::SolarSystemP, t)
+function dp(pdot, p, q, param::SolarSystemP, t)
     t = q[4]
     E = p[4]
     Q = q[1:3]
@@ -232,12 +232,12 @@ function dp(p, q, param::SolarSystemP, t)
     dp13 = -param.m * sum( param.gravis[i] / norm(pos[i])^3 * pos[i] for i in 1:n)
     dp4 = dot(P, accel(spk, tj, param.inertial, param.origin))
     dp4 += param.m * sum(param.gravis[i] / norm(pos[i])^3 * dot(pos[i], accel(spk, tj, param.origin, param.bodies[i])) for i = 1:n) 
-    SVector{4}([dp13; dp4])
+    pdot .= ([dp13; dp4])
 end
 
 function startvalues(h, v, dir, rot)
     pos = normalize(dir) * h
-    vel = normalize(cross(dir, rot)) * v
+    vel = normalize(cross(rot, dir)) * v
     vel, pos
 end
 
@@ -257,7 +257,7 @@ function startvalues(ssp::SolarSystemP, t::Period, tv::Period, h, vfactor)
     v = sqrt(ssp.gravis[1] / norm(h)) * vfactor
     vel, pos = startvalues(h, v, dir, rot)
     E = H([pos; ts], [vel; 0.0], ssp)
-    SVector{4,Float64}([vel * ssp.m; E]), SVector{4,Float64}([pos; ts])
+    ([vel * ssp.m; E]), ([pos; ts])
 end
 
 function problem(ssp::SolarSystemP, tspan, tv, h, v)
@@ -277,6 +277,7 @@ function moonstate(u, t, param)
     R = u[5:7]
     pos = R .- position(spk, tj, param.origin, moon)
     vel = V .- velocity(spk, tj, param.origin, moon)
+    vel, pos
 end
 
 function moonposvel(u, t, integrator)
@@ -285,18 +286,20 @@ function moonposvel(u, t, integrator)
 end
 
 function on_approach(integrator)
-    V, R = moonstate(integrator.u, integrator.t, integrator.param)
-    printline("closest to moon: $(norm(R)) km")
+    u, t, param  = integrator.u, integrator.t, integrator.p
+    V, R = moonstate(u, t, param)
+    println("closest to moon: $(norm(R)) km t=$t s R=$R km")
 end
 
 function plotorbit(t0::TDBEpoch, tv::Period, n::Real, v, h=6731.0; dt = 300)
     ssp = SolarSystemP(spk, t0, earth_barycenter, earth, [earth, moon])
-    axis = [-300000.0, -200000.0]
+    xaxis = [-350000.0, -300000.0]
+    yaxis = [-200000.0, -150000.0]
     prob = problem(ssp, (0days, n*days), tv, -h, v)
-    sol = solve(prob, KahanLi8(), dt=dt, callback_ignore=cb_moonapproach())
+    sol = solve(prob, KahanLi8(), dt=dt, callback=cb_moonapproach())
     x = [sol(i*3600*12)[5] for i = 0:max(2n,1)]
     y = [sol(i*3600*12)[6] for i = 0:max(2n,1)]
-    p = plot!(sol, vars=(5,6), xaxis=axis, yaxis=axis, ratio=1.0)
+    p = plot!(sol, vars=(5,6), xaxis=xaxis, yaxis=yaxis, ratio=1.0)
     scatter!(p, x, y, zcolor = (1:length(x)).*100)
     display(p)
     sol
@@ -324,5 +327,7 @@ end
 plotap(t0=t0) = plot([ap(i/2*days) for i = 0:56], legend=nothing)
 
 const interesting_parameters = [
-    (4.5days, 1.40090)
+    (4.5days, -1.40090),
+    (4.5days, +1.40250),
+    (4.0days, +1.40316),
 ]
