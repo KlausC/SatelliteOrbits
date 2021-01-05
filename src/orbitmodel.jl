@@ -126,7 +126,7 @@ function test2(;hrs=1hours, speed=1, angle=0)
     h0 = mean_radius(earth) + 400
     vx = sqrt(gpe / h0)
 
-    z = zero(SVector{3})a
+    z = zero(SVector{3})
     s, c = sincosd(angle)
     v = vx * speed
     re, ve = state(spk, t0, earth, earth)
@@ -266,22 +266,63 @@ function problem(ssp::SolarSystemP, tspan, tv, h, v)
     HamiltonianProblem((dp, dq), p0, q0, ts, ssp)
 end
 
-function plotorbit(t0::TDBEpoch, tv::Period, n::Integer, v, h=6700.0; dt = 300)
+function cb_moonapproach()
+    ContinuousCallback(moonposvel, on_approach)
+end
+
+function moonstate(u, t, param)
+    spk = param.spk
+    tj = param.t0 + t*seconds
+    V = u[1:3] / param.m
+    R = u[5:7]
+    pos = R .- position(spk, tj, param.origin, moon)
+    vel = V .- velocity(spk, tj, param.origin, moon)
+end
+
+function moonposvel(u, t, integrator)
+    V, R = moonstate(u, t, integrator.p)
+    dot(V, R)
+end
+
+function on_approach(integrator)
+    V, R = moonstate(integrator.u, integrator.t, integrator.param)
+    printline("closest to moon: $(norm(R)) km")
+end
+
+function plotorbit(t0::TDBEpoch, tv::Period, n::Real, v, h=6731.0; dt = 300)
     ssp = SolarSystemP(spk, t0, earth_barycenter, earth, [earth, moon])
-    axis = [-400000.0, 400000.0]
+    axis = [-300000.0, -200000.0]
     prob = problem(ssp, (0days, n*days), tv, -h, v)
-    sol = solve(prob, KahanLi8(), dt=dt)
-    for i = 0:n; p = scatter!(vcat.(sol(i*3600*24)[5:6])...); display(p); end
-    p = plot!(sol, vars=(5,6), xaxis=axis, yaxis=axis)
+    sol = solve(prob, KahanLi8(), dt=dt, callback_ignore=cb_moonapproach())
+    x = [sol(i*3600*12)[5] for i = 0:max(2n,1)]
+    y = [sol(i*3600*12)[6] for i = 0:max(2n,1)]
+    p = plot!(sol, vars=(5,6), xaxis=axis, yaxis=axis, ratio=1.0)
+    scatter!(p, x, y, zcolor = (1:length(x)).*100)
     display(p)
     sol
 end
 
-function plotmoon(t0, n) 
-    p = plot(legend=false)
-    for i = 0:n
-         scatter!(p, vcat.(position(spk, t0 + i*days, earth, moon)[1:2])..., mark=:x)
-         display(p)
-    end
+function plotmoon(t0, n)
+    n = n * 12 
+    p = plot(legend=false, aspect_ratio=1.0)
+    pos = [position(spk, t0 + (i/12)*days, earth, moon) for i = 0:n]
+    x, y = getindex.(pos, 1), getindex.(pos, 2)
+    plot!(p, x, y)
+    scatter!(p, x[1:6:end], y[1:6:end], zcolor = 1:6:length(x))
+    display(p)
 end
 
+const t0 = TDBEpoch("2021-01-03T21:00:00")
+
+radius(sol, t) = begin st = sol(t); hypot(st[5], st[6], st[7]) end
+
+function ap(t, t0=t0)
+    sol=plotorbit(t0, t, 0.075, 0.995, dt=60)
+    findmax(radius.(Ref(sol), sol.t))[1]
+end
+
+plotap(t0=t0) = plot([ap(i/2*days) for i = 0:56], legend=nothing)
+
+const interesting_parameters = [
+    (4.5days, 1.40090)
+]

@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [deps]
 AstroBase = "e1773a3a-3ab2-51da-b25a-65b4161c689f"
+DiffEqBase = "2b5f629d-d688-5b77-993f-72d75c75574e"
 DiffEqPhysics = "055956cb-9e8b-5191-98cc-73ae4a59e68a"
 DifferentialEquations = "0c46a032-eb83-5123-abaf-570d42b7fbaa"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
