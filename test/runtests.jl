@@ -1,4 +1,4 @@
 using SatelliteOrbits
 using Test
 
-include("keplerorbits.jl")
+@testset "kepler orbits" begin include("keplerorbits.jl") end
