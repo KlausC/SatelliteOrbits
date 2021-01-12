@@ -63,34 +63,27 @@ function H(p, q, param)
 end
 
 # ∂H/∂p (velocity relative to param.origin)
-function dq(qdot, p, q, param::SolarSystemP, t)
-    t = q[4]
-    P = p[1:3]
+function dq(qdot, P, Q, param::SolarSystemP, t)
     tj = param.t0 + t * seconds
-    qdot .= ([P / param.m - velocity(spk, tj, param.inertial, param.origin); 1.0])
+    qdot .= P / param.m - velocity(spk, tj, param.inertial, param.origin)
 end
 
 # -∂H/∂q (force relative to param.initial)
-function dp(pdot, p, q, param::SolarSystemP, t)
-    t = q[4]
-    E = p[4]
-    Q = q[1:3]
-    P = p[1:3]
+function dp(pdot, P, Q, param::SolarSystemP, t)
     tj = param.t0 + t * seconds
     n = length(param.bodies)
 
     pos = [Q .- position(spk, tj, param.origin, param.bodies[i]) for i = 1:n]
     h = norm(pos[1])
     dp13 = -param.m * sum( param.gravis[i] / norm(pos[i])^3 * pos[i] for i in 1:n)
-    dp4 = dot(P, accel(spk, tj, param.inertial, param.origin))
-    dp4 += param.m * sum(param.gravis[i] / norm(pos[i])^3 * dot(pos[i], accel(spk, tj, param.origin, param.bodies[i])) for i = 1:n)
+
     if h < 10000.0
         v = P / param.m - velocity(spk, tj, param.inertial, param.bodies[1])
         b = brake(h, norm(v))
         println("brake = $b h = $h")
         dp13 -= v / norm(v) * b
     end
-    pdot .= ([dp13; dp4])
+    pdot .= dp13
 end
 
 """
@@ -133,8 +126,7 @@ function startvalues(ssp::SolarSystemP, t::Period, tv::Period, h, vfactor)
     vel, pos = startvalues(h, v, dir, rot)
     vel .+= velocity(spk, tj, ssp.inertial, body1)
     pos .+= position(spk, tj, ssp.origin, body1)
-    E = 0.0 # H([pos; ts], [vel; 0.0], ssp)
-    ([vel * ssp.m; E]), ([pos; ts])
+    vel * ssp.m, pos
 end
 
 function problem(ssp::SolarSystemP, tspan, tv, h, v)
@@ -150,8 +142,8 @@ end
 function moonstate(u, t, param)
     spk = param.spk
     tj = param.t0 + t*seconds
-    V = u[1:3] / param.m
-    R = u[5:7]
+    V = u.x[1] / param.m
+    R = u.x[2]
     vmoon = velocity(spk, tj, param.origin, moon)
     pos = R .- position(spk, tj, param.origin, moon)
     vel = V .- vmoon
@@ -184,7 +176,7 @@ function earth_nearer(h)
         ssp = integrator.p
         spk = ssp.spk
         tj = integrator.p.t0 + t * seconds
-        v = u[5:7] .- position(spk, tj, ssp.origin, earth)
+        v = u.x[2] .- position(spk, tj, ssp.origin, earth)
         norm(v) < h
     end
 end
@@ -199,11 +191,11 @@ function plotorbit(t0::TDBEpoch, tv::Period, n::Real, v, h=6731.0; dt = 300, id=
 
     cb = CallbackSet(cb_moonapproach(), cb_closeearth(6331.0))
     sol = solve(prob, KahanLi8(), dt=dt, callback=cb)
-    x = [sol(i*3600*12)[5] for i = 0:max(2n,1)]
-    y = [sol(i*3600*12)[6] for i = 0:max(2n,1)]
+    x = [sol(i*3600*12)[4] for i = 0:max(2n,1)]
+    y = [sol(i*3600*12)[5] for i = 0:max(2n,1)]
     xaxis, yaxis = axis(ssp, tv, id)
-    # println(xaxis, " ", yaxis)
-    p = plot!(sol, vars=(5,6), ratio=1.0)
+    println("axis ", xaxis, " ", yaxis)
+    p = plot!(sol, vars=(4,5), ratio=1.0)
     scatter!(p, x, y; xaxis, yaxis, zcolor = (1:length(x)).*100)
     display(p)
     sol
@@ -255,13 +247,14 @@ function relpos(sol, t, ori=earth)
     spk = sol.prob.p.spk
     orig = sol.prob.p.origin
     tj = sol.prob.p.t0 + t*seconds
-    sol(t)[5:7] - position(spk, tj, orig, ori)
+    sol(t)[4:6] - position(spk, tj, orig, ori)
 end
 function relvel(sol, t, ori=earth)
-    spk = sol.prob.p.spk
-    orig = sol.prob.p.inertial
-    m = sol.prob.p.m
-    tj = sol.prob.p.t0 + t*seconds
+    ssp = sol.prob.p
+    spk = ssp.spk
+    orig = ssp.inertial
+    m = ssp.m
+    tj = ssp.t0 + t*seconds
     sol(t)[1:3] / m - velocity(spk, tj, orig, ori)
 end
 
