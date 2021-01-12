@@ -78,6 +78,117 @@ const seconds_per_day = 86400 # s/day
     ω longitude of perihelion
     Ω longitude of ascending node
 """
+function kepler_parameters(n::Integer, time::Real, oe::OrbitElements)
+    oen1, oen2 = oneplanet(n, oe)
+    kepler_parameters(oen1, oen2, time)
+end
+function kepler_ecliptic(n::Integer, time::Real, oe::OrbitElements)
+    oen1, oen2 = oneplanet(n, oe)
+    kepler_ecliptic(oen1, oen1, time)
+end
+function kepler_icrf(n::Integer, time::Real, oe::OrbitElements)
+    oen1, oen2 = oneplanet(n, oe)
+    kepler_icrf(oen1, oen2, time)
+end
+function oneplanet(n::Integer, oe::OrbitElements)
+    oe1 = oe.t1
+    oe2 = oe isa OrbitElements2 ? oe.t2 : zeros(0, 0)
+    J = size(oe1, 1) - size(oe2, 1)
+    oen1 = oe1[n,:]
+    oen2 = n > J ? oe2[n-J,:] : zeros(eltype(oe1), 4)
+    oen1, oen2
+end
+
+function kepler_parameters(oen1::AbstractVector, oen2::AbstractVector, time::Real)
+    T = (time - julian_days_epoch2000) / days_per_century
+    k = 6
+    oelements = [oen1[i+k] * T + oen1[i] for i = 1:k]
+    a, e, I, L, ωq, Ω = oelements
+    a *= AU
+    ω = ωq - Ω
+    M = L - ωq
+    if !iszero(oen2)
+        b, c, s, f = oen2
+        sf, cf = sincosd(f * T) # assuming f is in degrees/century
+        M += T^2 * b + cf * c + sf * s
+    end
+    M = mod(M + 180.0, 360.0) - 180.0
+    es = e / pi180
+    E = eccanomaly(M, e)
+
+    return [a, e, E, I, ω, Ω]
+end
+
+function kepler_ecliptic(oen1::AbstractVector, oen2::AbstractVector, time::Real)
+    a, e, E, I, ω, Ω = kepler_parameters(oen1, oen2, time)
+
+    # 4. heliocentric coordinates in planet's orbital plane
+    s, c = sincosd(E)
+    xs = (c - e) * a
+    sq = sqrt(1 - e^2)
+    ys = sq * s * a
+
+    # 5. coordinates in J2000 ecliptic plane - x-axis to equinox
+    so, co = sincosd(ω)
+    sO, cO = sincosd(Ω)
+    sI, cI = sincosd(I)
+    sosO = so * sO
+    cocO = co * cO
+    socO = so * cO
+    cosO = co * sO
+    sosOcI = sosO * cI
+    socOcI = socO * cI
+    cosOcI = cosO * cI
+    cocOcI = cocO * cI
+    sosI = so * sI
+    cosI = co * sI
+    mxx =  cocO - sosOcI
+    mxy = -socO - cosOcI
+    myx =  cosO + socOcI
+    myy = -sosO + cocOcI
+
+    xecl = mxx * xs + mxy * ys
+    yecl = myx * xs + myy * ys
+    zecl = sosI * xs + cosI * ys
+
+    return [xecl, yecl, zecl]
+end
+
+function kepler_icrf(oen1::AbstractVector, oen2::AbstractVector, time::Real)
+    xecl, yecl, zecl= kepler_ecliptic(oen1, oen2, time)
+
+    # 6. coordinates in international celestial reference frame J2000
+    se, ce = sincosd(obliquity2000)
+    xeq = xecl
+    yeq = ce * yecl - se * zecl
+    zeq = se * yecl + ce * zecl
+    
+    return [xeq, yeq, zeq]
+end
+
+"""
+    eccanomaly(M, e)
+    eccentric anomaly `E` from mean anomaly `M` and eccentricity `e`
+
+    `M = E - e * 180/π * sin(E)`
+
+    M and E in degrees, e dimensionless
+"""
+function eccanomaly(M, e)
+    es = e / pi180
+    tol = 1e-12
+    dE = 1.0
+    E = M + es * sind(M)
+    while abs(dE) > tol
+        sE, cE = sincosd(E)
+        dE = (M - (E - es * sE)) / (1.0 - e * cE)
+        E += dE
+    end
+    return E
+end
+
+# the same functions with derivative of time manually calculated
+# - in general ForwardDiff.derivative has advantages over manual
 function kepler_parameters_d(n::Integer, time::Real, oe::OrbitElements)
     oe1 = oe.t1
     oe2 = oe isa OrbitElements2 ? oe.t2 : zeros(0, 0)
@@ -108,28 +219,6 @@ function kepler_parameters_d(n::Integer, time::Real, oe::OrbitElements)
     E, E_d = eccanomaly_d((M, M_d), (e, e_d))
 
     return [a, e, E, I, ω, Ω], [a_d, e_d, E_d, I_d, ω_d, Ω_d]
-end
-function kepler_parameters(n::Integer, time::Real, oe::OrbitElements)
-oe1 = oe.t1
-oe2 = oe isa OrbitElements2 ? oe.t2 : zeros(0, 0)
-T = (time - julian_days_epoch2000) / days_per_century
-k = 6
-J = size(oe1, 1) - size(oe2, 1)
-oelements = [oe1[n,i+k] * T + oe1[n,i] for i = 1:k]
-a, e, I, L, ωq, Ω = oelements
-a *= AU
-ω = ωq - Ω
-M = L - ωq
-if oe isa OrbitElements2 && n > J
-    b, c, s, f = oe2[n-J,:]
-    sf, cf = sincosd(f * T) # assuming f is in degrees/century
-    M += T^2 * b + cf * c + sf * s
-end
-M = mod(M + 180.0, 360.0) - 180.0
-es = e / pi180
-E = eccanomaly(M, e)
-
-return [a, e, E, I, ω, Ω]
 end
 
 function kepler_ecliptic_d(n::Integer, time::Real, oe::OrbitElements)
@@ -178,41 +267,6 @@ function kepler_ecliptic_d(n::Integer, time::Real, oe::OrbitElements)
     return [xecl, yecl, zecl], [xecl_d, yecl_d, zecl_d]
 end
 
-function kepler_ecliptic(n::Integer, time::Real, oe::OrbitElements)
-    a, e, E, I, ω, Ω = kepler_parameters(n, time, oe)
-
-    # 4. heliocentric coordinates in planet's orbital plane
-    s, c = sincosd(E)
-    xs = (c - e) * a
-    sq = sqrt(1 - e^2)
-    ys = sq * s * a
-
-    # 5. coordinates in J2000 ecliptic plane - x-axis to equinox
-    so, co = sincosd(ω)
-    sO, cO = sincosd(Ω)
-    sI, cI = sincosd(I)
-    sosO = so * sO
-    cocO = co * cO
-    socO = so * cO
-    cosO = co * sO
-    sosOcI = sosO * cI
-    socOcI = socO * cI
-    cosOcI = cosO * cI
-    cocOcI = cocO * cI
-    sosI = so * sI
-    cosI = co * sI
-    mxx =  cocO - sosOcI
-    mxy = -socO - cosOcI
-    myx =  cosO + socOcI
-    myy = -sosO + cocOcI
-
-    xecl = mxx * xs + mxy * ys
-    yecl = myx * xs + myy * ys
-    zecl = sosI * xs + cosI * ys
-
-    return [xecl, yecl, zecl]
-end
-
 function kepler_icrf_d(n::Integer, time::Real, oe::OrbitElements)
     (xecl, yecl, zecl), (xecl_d, yecl_d, zecl_d) = kepler_ecliptic_d(n, time, oe)
 
@@ -225,26 +279,6 @@ function kepler_icrf_d(n::Integer, time::Real, oe::OrbitElements)
     return [xeq, yeq, zeq], [xeq_d, yeq_d, zeq_d]
 end
 
-function kepler_icrf(n::Integer, time::Real, oe::OrbitElements)
-    xecl, yecl, zecl= kepler_ecliptic(n, time, oe)
-
-    # 6. coordinates in international celestial reference frame J2000
-    se, ce = sincosd(obliquity2000)
-    xeq = xecl
-    yeq = ce * yecl - se * zecl
-    zeq = se * yecl + ce * zecl
-    
-    return SVector{3}(xeq, yeq, zeq)
-end
-
-"""
-    eccanomaly(M, e)
-    eccentric anomaly `E` from mean anomaly `M` and eccentricity `e`
-
-    `M = E - e * 180/π * sin(E)`
-
-    M and E in degrees, e dimensionless
-"""
 function eccanomaly_d((M, M_d), (e, e_d))
     es = e / pi180
     dE = 1.0
@@ -258,16 +292,4 @@ function eccanomaly_d((M, M_d), (e, e_d))
     sE, cE = sincosd(E)
     E_d = (M_d + e_d * (180.0 / pi) * sE) / (1.0 - e * cE)
     return E, E_d
-end
-function eccanomaly(M, e)
-    es = e / pi180
-    tol = 1e-12
-    dE = 1.0
-    E = M + es * sind(M)
-    while abs(dE) > tol
-        sE, cE = sincosd(E)
-        dE = (M - (E - es * sE)) / (1.0 - e * cE)
-        E += dE
-    end
-    return E
 end

@@ -1,161 +1,6 @@
-
-#=
-struct SatelliteModel{E<:Epoch,X,Y}
-    origin::CelestialBody
-    time::E
-    pos::X
-    vel::V
-end
-
-struct GravitationData
-    gp
-end
-
-function acceleration(state::AbstractVector, m::SatelliteModel, gd::GravitationData)
-    pos = state[1:3]
-    gp = gd.gp
-    - gp / norm(pos)^3 * pos
-end
-
-function gen_rhs(m::SatelliteModel, gd::GravitationalData)
-    function rhs!(deriv::AbstractVector, state::AbstractVector)
-        deriv[1:3] = state[4:6]
-        deriv[4:6] = acceleration(state, m, gd)
-    end
-end
-=#
-
 const G = AstroBase.gravitational_const()[1] # unit km^3/kg/s^2
 const spkpath = abspath(joinpath(homedir(), "dev", "JPLEphemeris", "deps"))
 const spk = SPK(joinpath(spkpath, "de440.bsp"))
-
-function test1()
-    gpe = grav_param(earth)
-    h0 = mean_radius(earth) + 400
-    g0 = gpe / h0^2
-    v0 = sqrt(g0 * h0)
-    me = gpe / G
-
-    z = zeros(SVector{3})
-    r = SVector(h0, 0.0, 0.0)
-    v = SVector(0.0, v0, 0.0)
-    mass = 1.25
-    body1 = MassBody(r, v, mass)
-    terra = MassBody(z, z, me)
-
-    system = GravitationalSystem([terra, body1], G)
-
-    tspan = (0.0, 2*3600.0)
-    simulation = NBodySimulation(system, tspan)
-
-    sim_result = run_simulation(simulation)
-
-    animate(sim_result, "eart1.gif", fps=2)
-
-    sim_result
-end
-
-struct SolarSystemParameters <: PotentialParameters
-    spk
-    t0
-    u0
-    v0
-end
-
-function SolarSystemParameters(spk, t0)
-    st = state(spk, t0, earth)
-    SolarSystemParameters(spk, t0, st[1], st[2])
-end
-
-import NBodySimulator.get_accelerating_function
-
-function get_accelerating_function(p::SolarSystemParameters, simulation::NBodySimulation)
-    gpe = grav_param(earth)
-    gpm = grav_param(moon)
-    gps = grav_param(sun)
-    gpj = grav_param(jupiter)
-    spk = p.spk
-    t0 = p.t0
-    u0 = p.u0
-    v0 = p.v0
-    r0 = mean_radius(earth) + 300
-    tt = 600
-
-    function ssaccel(dv, u, v, t, i)
-        #println("ssaccel(::$(typeof(dv)), ::$((u))")
-
-        if i == 1
-            dv .= 0
-        else
-            tj = t0 + t*seconds
-            u = u[:,i]
-            v = v[:,i]
-            pe, qe = SVector{3}.(state(spk, tj, earth, earth))
-            pm = SVector{3}(position(spk, tj, earth_barycenter, moon))
-            ps = SVector{3}(position(spk, tj, earth_barycenter, sun))
-            ue = u  .- pe
-            um = ue .- pm
-            us = ue .- ps
-            ve = v  .- qe
-            println("time=$tj $ue $u")
-            r = norm(ue)
-            s = norm(v)
-            gg = -gpe / r^3
-            gm = -gpm / norm(um)^3
-            gs = -gps / norm(us)^3
-            dp = gm * um + gs * us
-            #println("ssaccel gearth     $(gg * u)")
-            #println("ssaccel g moon/sun $dp")
-            #=
-            if r <= r0
-                dp .-= ve * (r0/r - 1) / tt
-            end
-            =#
-            dv .= gg * ue + 0 * dp
-        end
-        nothing
-    end
-end
-
-function test2(;hrs=1hours, speed=1, angle=0)
-    t0 = TDBEpoch("2020-12-23T21:00:00")
-    p = SolarSystemParameters(spk, t0)
-    u0, v0 = p.u0, p.v0
-
-    gpe = grav_param(earth)
-    h0 = mean_radius(earth) + 400
-    vx = sqrt(gpe / h0)
-
-    z = zero(SVector{3})
-    s, c = sincosd(angle)
-    v = vx * speed
-    re, ve = state(spk, t0, earth, earth)
-    r = SVector{3}(re + [s * h0, c * h0, 0.0])
-    v = SVector{3}(ve + [c*v, - s*v, 0.0])
-    mass = 1.25
-    body1 = MassBody(r, v, mass)
-    bearth = MassBody(z, z, 0.0)
-
-    pdict = Dict(:custom_potential_params => p)
-
-    system = PotentialNBodySystem([bearth, body1], pdict)
-    tspan = (0.0, toseconds(hrs))
-    simulation = NBodySimulation(system, tspan)
-
-    sim_result = run_simulation(simulation, rtol=1e-15, alg_hints=[:stiff])
-
-    #animate(sim_result, "eart2.gif", fps=2)
-
-    sim_result
-end
-
-function deviation(spk, tj, body, gpb, u)
-    ub = (position(spk, tj, earth, body))
-    us = ub .- u
-    gs = gpb / norm(us)^3 * us
-    gb = gpb / norm(ub)^3 * ub
-    gs - gb
-end
 
 accel(spk, t0, dt=600) = accel(spk, t0, ssb, earth, dt)
 
@@ -235,16 +80,39 @@ function dp(pdot, p, q, param::SolarSystemP, t)
     n = length(param.bodies)
 
     pos = [Q .- position(spk, tj, param.origin, param.bodies[i]) for i = 1:n]
+    h = norm(pos[1])
     dp13 = -param.m * sum( param.gravis[i] / norm(pos[i])^3 * pos[i] for i in 1:n)
     dp4 = dot(P, accel(spk, tj, param.inertial, param.origin))
     dp4 += param.m * sum(param.gravis[i] / norm(pos[i])^3 * dot(pos[i], accel(spk, tj, param.origin, param.bodies[i])) for i = 1:n)
+    if h < 10000.0
+        v = P / param.m - velocity(spk, tj, param.inertial, param.bodies[1])
+        b = brake(h, norm(v))
+        println("brake = $b h = $h")
+        dp13 -= v / norm(v) * b
+    end
     pdot .= ([dp13; dp4])
+end
+
+"""
+    brake(h, v)
+    h in km distance to center of earth
+    v in km/s relative to earth
+    result in km/s^2
+"""
+function brake(h, v)
+    c = 1e-8 * exp(-(h - 7000.0)/100)
+    c * norm(v)^2
 end
 
 function startvalues(h, v, dir, rot)
     pos = normalize(dir) * h
     vel = normalize(cross(rot, dir)) * v
     vel, pos
+end
+
+function speed_v1(b::CelestialBody, h)
+    G = grav_param(b)
+    sqrt(G / norm(h))
 end
 
 function startvalues(ssp::SolarSystemP, t::Period, tv::Period, h, vfactor)
@@ -261,7 +129,7 @@ function startvalues(ssp::SolarSystemP, t::Period, tv::Period, h, vfactor)
         rot = [0.0, 0.0, 1.0]
         dir = [1.0, 0.0, 0.0]
     end
-    v = sqrt(ssp.gravis[1] / norm(h)) * vfactor
+    v = speed_v1(ssp.bodies[1], h) * vfactor
     vel, pos = startvalues(h, v, dir, rot)
     vel .+= velocity(spk, tj, ssp.inertial, body1)
     pos .+= position(spk, tj, ssp.origin, body1)
@@ -284,9 +152,10 @@ function moonstate(u, t, param)
     tj = param.t0 + t*seconds
     V = u[1:3] / param.m
     R = u[5:7]
+    vmoon = velocity(spk, tj, param.origin, moon)
     pos = R .- position(spk, tj, param.origin, moon)
-    vel = V .- velocity(spk, tj, param.origin, moon)
-    vel, pos
+    vel = V .- vmoon
+    vel, pos, vmoon
 end
 
 function moonposvel(u, t, integrator)
@@ -296,18 +165,44 @@ end
 
 function on_approach(integrator)
     u, t, param  = integrator.u, integrator.t, integrator.p
-    V, R = moonstate(u, t, param)
-    println("closest to moon: $(norm(R)) km t=$t s R=$R km")
+    V, R, vmoon = moonstate(u, t, param)
+    if norm(R) < 5000.0
+        println("closest to moon: $(norm(R)) km t=$t s R=$R km")
+        v0 = norm(V)
+        v1 = speed_v1(moon, R)
+        vnew = V .* v1 / v0 .+ vmoon
+        integrator.u = ArrayPartition([vnew; 0.0], u.x[2])
+        println("reduced rel. speed from $v0 to $v1")
+    end
 end
 
-function plotorbit(t0::TDBEpoch, tv::Period, n::Real, v, h=6731.0; dt = 300, id=2)
-    ssp = SolarSystemP(spk, t0, earth_barycenter, earth, [earth, moon])
+function cb_closeearth(h)
+    DiscreteCallback(earth_nearer(h), at_earth_close)
+end
+function earth_nearer(h)
+    function (u, t, integrator)
+        ssp = integrator.p
+        spk = ssp.spk
+        tj = integrator.p.t0 + t * seconds
+        v = u[5:7] .- position(spk, tj, ssp.origin, earth)
+        norm(v) < h
+    end
+end
+function at_earth_close(integrator)
+    println("crash! after $(integrator.t) s")
+    terminate!(integrator)
+end
+
+function plotorbit(t0::TDBEpoch, tv::Period, n::Real, v, h=6731.0; dt = 300, id=1)
+    ssp = SolarSystemP(spk, t0, ssb, earth, [earth, moon, sun])
     prob = problem(ssp, (0days, n*days), tv, -h, v)
-    sol = solve(prob, KahanLi8(), dt=dt, callback=cb_moonapproach())
+
+    cb = CallbackSet(cb_moonapproach(), cb_closeearth(6331.0))
+    sol = solve(prob, KahanLi8(), dt=dt, callback=cb)
     x = [sol(i*3600*12)[5] for i = 0:max(2n,1)]
     y = [sol(i*3600*12)[6] for i = 0:max(2n,1)]
     xaxis, yaxis = axis(ssp, tv, id)
-    println(xaxis, " ", yaxis)
+    # println(xaxis, " ", yaxis)
     p = plot!(sol, vars=(5,6), ratio=1.0)
     scatter!(p, x, y; xaxis, yaxis, zcolor = (1:length(x)).*100)
     display(p)
@@ -325,8 +220,8 @@ function axis(ssp, tv, i=2)
         r = 4e5
         pos = zeros(3)
     end
-    [pos[1] - r, pos[1] + r] .+ [5000, 5000]
-    [pos[2] - r, pos[2] + r] .+ [5000, 5000]
+    R = 4000.0
+    ([pos[1] - r, pos[1] + r] .+ [-R, R], [pos[2] - r, pos[2] + r] .+ [-R, R])
 end
 
 function plotmoon(t0, n)
