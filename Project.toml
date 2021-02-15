@@ -19,6 +19,7 @@ Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
 AstroBase = "0.1"
+DiffEqBase = "6.53"
 DiffEqPhysics = "3"
 DifferentialEquations = "6"
 OrdinaryDiffEq = "5"
